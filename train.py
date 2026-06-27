@@ -9,17 +9,15 @@ import pandas as pd
 from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split
-from ucimlrepo import fetch_ucirepo
 
 TOP_N_FEATURES = 20
 MODEL_PATH = "model.pkl"
+DATASET_PATH = "dataset/secom.csv"
 
 
 def main():
-    secom = fetch_ucirepo(id=179)
-    # ucimlrepo doesn't pre-split features/targets for this dataset --
-    # `original` has everything: 'class' is the label, 'timestamp' isn't a feature.
-    raw = secom.data.original
+    # 'class' is the label, 'timestamp' isn't a feature.
+    raw = pd.read_csv(DATASET_PATH)
     X = raw.drop(columns=["class", "timestamp"])
     y = raw["class"]
 
