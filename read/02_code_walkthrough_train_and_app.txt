@@ -1,0 +1,349 @@
+CODE WALKTHROUGH - train.py and app.py
+What every line is actually doing, and why
+====================================================================
+
+This chapter explains the two files you already have working:
+  train.py  - turns raw data into a saved model file (model.pkl)
+  app.py    - turns that saved model file into a live, callable service
+
+Read train.py first, then app.py. They are two halves of the same story:
+"how does a number on a spreadsheet become an answer a website can ask
+for."
+
+
+====================================================================
+PART 1: train.py
+====================================================================
+
+THE IMPORTS - what each tool is for
+--------------------------------------------------------------------
+  import pickle
+      Python's built-in way to save any Python object (a number, a
+      list, a trained model, even a dictionary of several things) to a
+      file on disk, and load it back later exactly as it was. Think of
+      it as "freeze this object, thaw it later." We use it to freeze
+      the trained model so app.py doesn't have to retrain it every time
+      it starts.
+
+  import pandas as pd
+      Pandas gives you the "DataFrame" - basically a spreadsheet object
+      inside Python. Rows and named columns, and a huge toolkit for
+      slicing, cleaning, and reshaping that spreadsheet.
+
+  from sklearn.impute import SimpleImputer
+      A small tool whose only job is: "find the missing/blank values in
+      my data and fill them in with something reasonable" (here: the
+      column's average).
+
+  from sklearn.linear_model import LogisticRegression
+      The actual learning algorithm. More on this below.
+
+  from sklearn.model_selection import train_test_split
+      A tool that splits your data into two piles: one to learn from,
+      one to test on, so you're not grading yourself on questions you
+      already saw the answers to.
+
+
+STEP-BY-STEP THROUGH main()
+--------------------------------------------------------------------
+
+  raw = pd.read_csv(DATASET_PATH)
+
+  Loads dataset/secom.csv into a DataFrame called `raw`. At this point
+  it's literally just the spreadsheet, 1567 rows x 592 columns,
+  unchanged.
+
+  X = raw.drop(columns=["class", "timestamp"])
+  y = raw["class"]
+
+  This is the single most important split in any ML pipeline:
+    X = the "question" - all the sensor readings, the things we're
+        ALLOWED to look at when making a prediction.
+    y = the "answer" - the actual pass/fail outcome (-1 or 1) for each
+        row, the thing we're trying to predict.
+  We also throw away "timestamp" - it's metadata about WHEN the
+  measurement happened, not a property of the chip itself, so it's not
+  a useful input for the model (and if anything, training on it risks
+  the model "cheating" by learning date patterns instead of physics).
+
+  Why split X and y at all? Because if you accidentally leave the
+  answer (y) inside the question (X), the model can just "look up" the
+  answer instead of learning the actual relationship. This is one of
+  the most common beginner bugs in ML.
+
+  imputer = SimpleImputer(strategy="mean")
+  X_imputed = pd.DataFrame(imputer.fit_transform(X), columns=X.columns)
+
+  Real sensor data has gaps - a sensor glitches, a reading didn't get
+  logged, etc. Most ML algorithms cannot handle a missing value (NaN) -
+  they'll either crash or silently misbehave. SimpleImputer's job is to
+  fill every gap in with a sensible placeholder. Strategy "mean" means:
+  "for this column, fill any blank with the average of all the other
+  values in that same column."
+
+  .fit_transform(X) does two things in one call:
+    fit  -> looks at X and LEARNS the mean of every column
+    transform -> actually replaces the NaNs using those learned means
+  We then wrap the result back into a DataFrame because the imputer
+  hands back a plain array, and we want our column names back.
+
+  NOTE (an honest nuance, not a bug): we compute the mean using ALL the
+  data here, before splitting into train/test. In a stricter production
+  setup you'd compute the mean using ONLY the training data, then apply
+  it to the test set - otherwise a tiny bit of information about the
+  test set "leaks" into training. For this throwaway baseline (where
+  the brief explicitly says accuracy doesn't matter) this is an
+  acceptable shortcut - but it's exactly the kind of detail an
+  interviewer might poke at, so now you know it exists and can explain
+  the trade-off if asked.
+
+  top_features = X_imputed.var().sort_values(ascending=False).head(20).index.tolist()
+  X_top = X_imputed[top_features]
+
+  592 columns is a lot, and many of them are probably almost useless
+  (e.g. a sensor that reads basically the same number every single
+  time). VARIANCE measures how much a column's values actually spread
+  out / change. A column with near-zero variance is "boring" - it
+  barely varies, so it can't be helping distinguish pass from fail.
+  This line: computes variance per column -> sorts columns from most-
+  varying to least -> keeps the top 20 -> keeps only those columns.
+
+  Honest limitation: high variance is only a CRUDE proxy for
+  "informative." A column could vary a lot and still have nothing to
+  do with pass/fail, and a column could correlate strongly with the
+  label while having modest variance. A more rigorous approach would
+  test correlation with `y` directly (e.g. SelectKBest with a
+  statistical test). We're using variance here because it's simple,
+  fast, and "good enough" for a baseline whose whole point is to exist,
+  not to be optimal.
+
+  X_train, X_test, y_train, y_test = train_test_split(
+      X_top, y, test_size=0.2, random_state=42, stratify=y
+  )
+
+  Splits the 1567 rows into:
+    80% (X_train, y_train) - what the model learns from
+    20% (X_test, y_test)   - held back, used only to grade the model
+                             afterwards, on data it has NEVER seen.
+  random_state=42 just means "use this fixed shuffle every time" so the
+  split is reproducible - you'll get the exact same train/test rows
+  every time you rerun this script, which matters for debugging.
+  stratify=y is important here specifically because SECOM is
+  IMBALANCED (way more passes than fails). Stratify forces both the
+  train and test piles to keep the same pass/fail ratio as the original
+  data, so you don't accidentally end up with a test set that's, say,
+  100% passes by random bad luck.
+
+  model = LogisticRegression(max_iter=1000, class_weight="balanced")
+  model.fit(X_train, y_train)
+
+  Logistic Regression, despite the name, is a CLASSIFICATION algorithm
+  (predicts a category, here pass/fail), not a regression one. The
+  intuition: it tries to draw a (linear) boundary through your data that
+  best separates the two classes, and instead of just saying "this side
+  of the line," it gives you a probability (a number between 0 and 1)
+  of how confidently a point falls into the "fail" class. Internally it
+  finds this boundary through an iterative optimization process
+  (gradient-based) - that's what max_iter limits: how many optimization
+  steps it's allowed before giving up. (You saw a ConvergenceWarning
+  earlier because 1000 steps wasn't quite enough to fully settle -
+  harmless here, but in a real project you'd either raise max_iter or
+  scale your features, since unscaled features make the optimizer's job
+  harder.)
+
+  class_weight="balanced" is the single most important parameter here
+  given OUR data. SECOM has very few "fail" examples compared to
+  "pass." Without this setting, a lazy model could get a deceptively
+  high accuracy just by predicting "pass" for everything, since passes
+  dominate the data. "balanced" tells the algorithm to automatically
+  weight mistakes on the minority class (fail) more heavily during
+  training, so it's actually forced to learn to recognize fails instead
+  of ignoring them.
+
+  model.fit(X_train, y_train) is the actual "learning" step - this is
+  where the optimization runs and the model's internal parameters get
+  set based on the training data.
+
+  accuracy = model.score(X_test, y_test)
+
+  Grades the model: feeds it the held-out test inputs, compares its
+  predictions to the real test answers, returns the fraction it got
+  right. The print statement right after is intentionally blunt about
+  this number being "irrelevant" for this exercise - the brief is
+  explicit that the INFRASTRUCTURE is what's being graded, not model
+  quality. Don't spend any energy trying to push this number up.
+
+  with open(MODEL_PATH, "wb") as f:
+      pickle.dump({"model": model, "features": top_features}, f)
+
+  Saves a DICTIONARY containing both the trained model AND the list of
+  20 feature names it was trained on - to model.pkl. Why bundle the
+  feature list together with the model? Because at prediction time,
+  whatever code loads this file later needs to know EXACTLY which 20
+  columns, in which order, the model expects. Without saving that list
+  alongside it, you'd have to somehow "remember" it separately, which
+  is fragile and a classic source of silent bugs (feed the model
+  columns in the wrong order, and it will give you a confident, wrong
+  answer with no error).
+
+
+====================================================================
+PART 2: app.py
+====================================================================
+
+  with open(MODEL_PATH, "rb") as f:
+      artifact = pickle.load(f)
+  model = artifact["model"]
+  feature_names = artifact["features"]
+
+  This code sits at the TOP LEVEL of the file, outside any function.
+  That matters: it runs exactly ONCE, the moment the server process
+  starts up - not on every request. This is why a model service is
+  fast: the expensive part (loading the model into memory) happens once
+  at startup, and every subsequent request just reuses the
+  already-loaded `model` object sitting in memory.
+
+  app = FastAPI(title="YieldGuard")
+
+  Creates the central application object. Every endpoint you define
+  (the @app.post(...) functions below) registers itself onto this one
+  object. FastAPI also uses this to auto-generate interactive API docs
+  (if you ran this server, you could visit /docs in a browser and see a
+  live, clickable list of your endpoints - for free, with zero extra
+  code).
+
+  class PredictRequest(BaseModel):
+      features: dict[str, float]
+
+  This is a PYDANTIC model - not a machine learning model, a DATA
+  SHAPE. It describes: "a valid request body MUST have a field called
+  'features', and it must be a dictionary where every key is a string
+  (the feature name) and every value is a float (the sensor reading)."
+  FastAPI uses this class definition to automatically:
+    - parse the incoming raw JSON into this shape
+    - reject (with a clear error) anything that doesn't match
+    - generate documentation showing exactly what a valid request
+      looks like
+
+  This is "validation" in action - the thing emphasized back in Level
+  0's reading. You get all of this just by writing a type hint
+  (`dict[str, float]`); you didn't have to write any manual
+  if-this-field-is-missing-then-error code yourself.
+
+  @field_validator("features")
+  @classmethod
+  def must_match_expected_features(cls, value):
+      missing = set(feature_names) - value.keys()
+      if missing:
+          raise ValueError(f"missing features: {sorted(missing)}")
+      return value
+
+  Pydantic's built-in type checking (above) only confirms "this is a
+  dict of strings to floats" - it has no idea WHICH keys we actually
+  need. This function adds that extra, custom rule on top.
+
+  A "decorator" (the @something lines above a function) is a way of
+  saying "wrap this function with extra behavior, without changing the
+  function's own code." @field_validator("features") tells Pydantic
+  "run this function automatically every time someone tries to create a
+  PredictRequest, specifically to check the 'features' field."
+  @classmethod just means this function operates on the CLASS itself
+  rather than on one specific instance of it - required here because
+  validation happens DURING the object's construction, before a normal
+  instance even fully exists yet.
+
+  Inside the function: set(feature_names) - value.keys() is a SET
+  DIFFERENCE - "everything that's in our required feature list, that
+  is NOT present in what the user actually sent." If that's non-empty,
+  something required is missing, so we raise an error - and FastAPI
+  automatically turns that raised error into a proper HTTP error
+  response sent back to the caller, with a clear message about exactly
+  which fields were missing.
+
+  class PredictResponse(BaseModel):
+      prediction: int
+      fail_probability: float
+
+  Same idea as PredictRequest, but for the OUTPUT shape: "whatever this
+  endpoint returns will always have exactly an integer prediction and a
+  float probability." This is what lets API consumers (and FastAPI's
+  auto-docs) know exactly what shape of answer to expect, every time.
+
+  @app.post("/predict", response_model=PredictResponse)
+  def predict(request: PredictRequest):
+
+  This decorator registers the function below it as the handler for
+  "someone sent a POST request to /predict." The `request: PredictRequest`
+  type hint is what triggers all the validation described above, fully
+  automatically, before a single line inside this function body runs.
+  `response_model=PredictResponse` tells FastAPI to validate AND shape
+  whatever this function returns against that response schema too -
+  so you can't accidentally leak some other field by mistake.
+
+      row = pd.DataFrame([[request.features[name] for name in feature_names]], columns=feature_names)
+
+  This is the critical "order matters" line. request.features is a
+  dictionary (unordered, conceptually), but the model was trained on a
+  specific ORDERED list of columns (feature_names, loaded from the
+  pickle). This line rebuilds a single-row DataFrame by explicitly
+  pulling values out of the dict IN THE EXACT ORDER the model expects,
+  regardless of what order they arrived in the request. This is exactly
+  the "silent wrong answer" bug mentioned earlier in train.py's notes -
+  this line is what prevents it.
+
+      prediction = int(model.predict(row)[0])
+
+  model.predict() actually returns an array (because in general you
+  could ask it to predict many rows at once) - we sent exactly one row,
+  so we grab the first (only) result with [0], and convert it from a
+  numpy number type to a plain Python int (numpy types don't play
+  nicely with JSON serialization).
+
+      fail_probability = float(model.predict_proba(row)[0][list(model.classes_).index(1)])
+
+  predict() gives you the model's final DECISION (a hard -1 or 1).
+  predict_proba() gives you the underlying CONFIDENCE - the actual
+  probability for each possible class. It returns one probability per
+  class, in whatever order model.classes_ happens to store them in
+  (which depends on the data, NOT something you can assume is always
+  [class_0, class_1] in a fixed order). `list(model.classes_).index(1)`
+  looks up: "which position, in this particular model's class list,
+  corresponds to the 'fail' class (label 1)?" - and then we grab the
+  probability at exactly that position. This defensive lookup is what
+  makes the code correct even if classes_ happened to be ordered
+  differently than expected.
+
+  class AskRequest(BaseModel):
+      query: str
+
+  @app.post("/ask")
+  def ask(request: AskRequest):
+      raise HTTPException(status_code=501, detail="Explainer (RAG) not wired yet -- Level 4")
+
+  This is the STUB endpoint. It exists so the API's shape (what
+  endpoints will eventually exist) is already visible and real, even
+  though the actual RAG logic behind it doesn't exist yet (that's
+  Level 4's job). HTTPException is FastAPI's way of saying "stop normal
+  processing, and instead send back this specific HTTP error." Status
+  code 501 specifically means "Not Implemented" - the technically
+  correct code for "this endpoint exists, but the feature behind it
+  doesn't, yet." This is a deliberate, honest placeholder, not a bug.
+
+
+THE BIG PICTURE CONNECTING BOTH FILES
+--------------------------------------------------------------------
+train.py runs ONCE (or whenever you want to retrain), offline, and its
+entire job is to produce model.pkl - a frozen snapshot containing a
+trained model PLUS the exact feature list it needs.
+
+app.py runs CONTINUOUSLY as a live server. It loads that frozen
+snapshot ONE TIME at startup, then spends its entire life answering
+"/predict" calls using the model that's already sitting in memory,
+plus doing the validation work that keeps garbage data from ever
+reaching that model.
+
+This separation - "train offline, serve online" - is the single most
+fundamental pattern in all of MLOps. Every single later level
+(Kubernetes, Azure, monitoring) is really just about making the
+"serve online" half more reliable, more observable, and more
+scalable. The model never needs to change for any of that.

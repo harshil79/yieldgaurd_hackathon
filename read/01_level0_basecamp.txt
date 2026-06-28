@@ -1,0 +1,181 @@
+LEVEL 0 - BASE CAMP
+What you're learning: containers, REST APIs, and the difference between a
+"model" and a "service"
+====================================================================
+
+WHY THIS CHAPTER EXISTS
+--------------------------------------------------------------------
+Before you build anything, you need three mental models straight in your
+head. Everything later (Kubernetes, Azure, monitoring) is just more
+machinery built on top of these three ideas. If these three are shaky,
+everything after will feel like memorizing commands instead of
+understanding a system. So we go slow here.
+
+
+1. WHAT IS A CONTAINER, REALLY?
+--------------------------------------------------------------------
+Forget the technical definition for a second. Think about moving house.
+
+If you just throw your stuff in a truck loose, it arrives broken and mixed
+up, and the truck driver needs to know exactly how your furniture goes
+together. If you pack everything into labeled, sealed boxes, ANY truck,
+ANY driver can move them, and nothing depends on the truck knowing
+anything about your furniture.
+
+A container is the sealed box for your software. It bundles:
+  - your code
+  - the exact version of Python (or whatever language) it needs
+  - every library your code imports
+  - small OS-level settings it depends on
+
+...into one unit that runs the same way on your laptop, your friend's
+laptop, or a server in Azure halfway across the world. You're not hoping
+the destination machine "happens to have the right stuff installed." You
+brought it all with you, sealed in the box.
+
+This solves the classic developer nightmare: "it works on my machine."
+That sentence is a confession that your code secretly depends on
+invisible stuff installed on YOUR machine only. A container makes that
+invisible stuff visible and portable.
+
+CONTAINER VS VIRTUAL MACHINE (VM) - what's the actual difference?
+A VM pretends to be an entire fake computer: fake hard disk, fake
+hardware, its own full copy of an operating system, on top of your real
+computer. It's heavy and slow to start (think: minutes).
+
+A container does NOT carry its own operating system. It borrows your
+real computer's "kernel" (the core part of the OS that talks to
+hardware) and only packages the application layer on top. That's why
+containers start in seconds, not minutes, and use far less memory.
+
+Docker is simply the most popular TOOL for building, running, and
+sharing containers. When people say "containerize the app," they mean
+"use Docker to build one of these sealed boxes for it."
+
+
+2. WHAT DOES A REST API / ENDPOINT ACTUALLY DO?
+--------------------------------------------------------------------
+Imagine a restaurant. You (the customer) don't walk into the kitchen and
+cook your own food. You sit at a table, and there's a fixed, predictable
+way to get what you want: you tell the waiter what you want, the kitchen
+makes it, the waiter brings it back.
+
+A REST API is that "waiter system" for software. Your app exposes fixed,
+predictable doors (called ENDPOINTS) that other programs can knock on
+over the internet (using a protocol called HTTP), to ask for something
+or to hand over information.
+
+Two HTTP "verbs" you'll see constantly:
+  GET  -> "give me something" (like asking for the menu)
+  POST -> "here's some data, do something with it and give me a result"
+          (like placing an order with details)
+
+Example from our project: POST /predict means "here is a row of sensor
+data from the factory floor, run it through the model, and tell me
+pass or fail."
+
+The endpoint is just a URL + a rule for what kind of request it accepts.
+FastAPI (the Python tool we're using) is what lets you define these
+doors in a few lines of Python, instead of writing raw networking code
+yourself.
+
+
+3. MODEL FILE VS MODEL SERVICE - the most important distinction today
+--------------------------------------------------------------------
+A trained machine learning model, once saved to disk, is just a file
+(in our project: model.pkl). On its own, that file is INERT. It cannot
+do anything by itself. It's like a recipe written on paper - useless
+until someone is in a kitchen actively cooking it.
+
+To make it useful to OTHER programs (a website, a mobile app, another
+microservice), you need a process that:
+  1. is always running,
+  2. has the model loaded into memory,
+  3. is listening on a network port for incoming requests,
+  4. knows how to take a request, feed it to the model, and send back
+     an answer.
+
+That always-on, listening, callable thing is the MODEL SERVICE. Wrapping
+your model.pkl inside a FastAPI app, and running that app, is exactly
+what turns a dead file into a live service that anyone (or anything) on
+the network can use.
+
+THIS is the actual skill being tested in this whole challenge: not "can
+you train a model" (that part is almost a toy on purpose), but "can you
+turn a model into a real, running, callable, production-shaped thing."
+
+
+4. STEP BY STEP: WHAT HAPPENS WHEN SOMETHING CALLS POST /predict
+--------------------------------------------------------------------
+This is worth memorizing because debugging a broken API later is 90%
+"which one of these steps failed":
+
+  Step 1 - A client (could be curl, a browser, another service) sends an
+           HTTP POST request to http://your-service/predict, with a
+           JSON body containing the input data (e.g. sensor readings).
+
+  Step 2 - FastAPI receives the raw request and looks at the JSON body.
+
+  Step 3 - FastAPI checks that JSON body against a schema you defined
+           (in our code, this is the Pydantic "PredictRequest" class).
+           This is VALIDATION. If a required field is missing or the
+           wrong type, FastAPI rejects the request right here, before
+           your model ever sees it. This is the step most people forget
+           exists, and it's the difference between a "service" and a
+           script that happens to be reachable over the network.
+
+  Step 4 - Once validated, your Python code runs: it takes the cleaned,
+           trusted data and calls model.predict() on it.
+
+  Step 5 - The model returns a raw prediction (a number).
+
+  Step 6 - Your code wraps that number into a response shape you defined
+           (our "PredictResponse" class), and FastAPI converts it back
+           into JSON.
+
+  Step 7 - That JSON travels back over HTTP to the original caller.
+
+Notice: the model itself (step 4-5) is a tiny part of this whole flow.
+Steps 1-3 and 6-7 are "the service" - and that's the part with all the
+production value.
+
+
+USEFUL LINKS (optional, go deeper if you want)
+--------------------------------------------------------------------
+- FastAPI, First Steps (official docs, ~10 min):
+  https://fastapi.tiangolo.com/tutorial/first-steps/
+
+- Docker, Get Started overview (official docs, ~10 min):
+  https://docs.docker.com/get-started/
+
+- "Containers vs VMs" explained visually (Docker's own short page):
+  https://www.docker.com/resources/what-container/
+
+- Pydantic validation docs (the part doing step 3 above):
+  https://docs.pydantic.dev/latest/concepts/validators/
+
+
+UNDERSTANDING TEST - the gate you already passed
+--------------------------------------------------------------------
+Q1: Why containerize the model service instead of just running
+    "python app.py" and saying "it works on my machine"?
+
+    Good answer: Because "works on my machine" secretly depends on
+    everything already installed on YOUR machine (your Python version,
+    your libraries, your OS quirks). A container packs the app AND its
+    exact dependencies into one portable box that runs identically
+    anywhere, without anyone needing to manually recreate your setup.
+    It shares the host machine's kernel (so it's lightweight, unlike a
+    full VM) but isolates everything else.
+
+Q2: What actually happens, step by step, when something does
+    POST /predict with a row of process data?
+
+    Good answer: see the 7 steps in section 4 above. The short version:
+    request arrives -> JSON body is parsed -> validated against a schema
+    -> (only if valid) fed to model.predict() -> result wrapped into a
+    response shape -> sent back as JSON.
+
+If you can explain both of these out loud, in your own words, without
+re-reading this file, you've actually passed the gate (not just typed an
+answer that sounded right).
