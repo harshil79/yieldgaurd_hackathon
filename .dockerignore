@@ -1,0 +1,10 @@
+.venv/
+.git/
+dataset/
+logs/
+metrics/
+read/
+__pycache__/
+*.pyc
+.DS_Store
+.~lock.*#
