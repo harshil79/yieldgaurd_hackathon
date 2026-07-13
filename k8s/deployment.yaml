@@ -1,0 +1,31 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: yieldguard
+  namespace: yieldguard
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: yieldguard
+  template:
+    metadata:
+      labels:
+        app: yieldguard
+    spec:
+      containers:
+        - name: yieldguard
+          image: yieldguard:latest
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: yieldguard-config
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
