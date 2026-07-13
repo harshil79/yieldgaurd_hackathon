@@ -1,0 +1,14 @@
+replicaCount: 3
+
+image:
+  repository: yieldguard
+  tag: latest
+  pullPolicy: Never
+
+service:
+  type: NodePort
+  port: 8000
+
+config:
+  modelPath: "/app/model.pkl"
+  logLevel: "info"
